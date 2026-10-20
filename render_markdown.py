@@ -2,6 +2,7 @@
 """Convert a Markdown file to a standalone, styled HTML document for GNOME Sushi."""
 
 import html
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,15 @@ GITHUB_ALERT_RE = re.compile(
     r'<blockquote>\s*<p>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br\s*/?>|\n)?',
     re.IGNORECASE,
 )
+
+MERMAID_FENCE_RE = re.compile(
+    r'^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n'
+    r'(?P<code>.*?)'
+    r'^(?P=indent)(?P=fence)[ \t]*$',
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
+
+MERMAID_CDN_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'
 
 
 def _replace_task_item(match: re.Match) -> str:
@@ -74,10 +84,52 @@ def strip_frontmatter(text: str) -> tuple[str, str]:
     return fm_html, body
 
 
+def extract_mermaid_blocks(text: str) -> tuple[str, list[str]]:
+    """Replace fenced ```mermaid blocks with placeholders before Markdown/Pygments processing."""
+    blocks: list[str] = []
+
+    def _sub(match: re.Match) -> str:
+        idx = len(blocks)
+        blocks.append(match.group('code').strip())
+        return f'\n\n<!--SUSHI_MERMAID_{idx}-->\n\n'
+
+    processed = MERMAID_FENCE_RE.sub(_sub, text)
+    return processed, blocks
+
+
+def restore_mermaid_blocks(rendered_html: str, blocks: list[str]) -> str:
+    """Restore extracted Mermaid blocks as <pre class="mermaid"> containers."""
+    for idx, code in enumerate(blocks):
+        placeholder = f'<!--SUSHI_MERMAID_{idx}-->'
+        replacement = (
+            '<div class="mermaid-container">'
+            f'<pre class="mermaid">{html.escape(code)}</pre>'
+            '</div>'
+        )
+        rendered_html = rendered_html.replace(f'<p>{placeholder}</p>', replacement)
+        rendered_html = rendered_html.replace(placeholder, replacement)
+    return rendered_html
+
+
+def _get_mermaid_script_src() -> str:
+    """Locate a local mermaid.min.js for offline rendering, falling back to jsDelivr CDN."""
+    xdg_data = os.environ.get('XDG_DATA_HOME', os.path.expanduser('~/.local/share'))
+    candidates = [
+        Path(xdg_data) / 'sushi' / 'mermaid.min.js',
+        Path(__file__).resolve().parent / 'vendor' / 'mermaid.min.js',
+        Path('/usr/share/javascript/mermaid/mermaid.min.js'),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.as_uri()
+    return MERMAID_CDN_URL
+
+
 def render_markdown(filepath: str, dark_mode: bool = True) -> str:
     path = Path(filepath)
     raw = path.read_text(encoding='utf-8', errors='replace')
     fm_html, body = strip_frontmatter(raw)
+    body, mermaid_blocks = extract_mermaid_blocks(body)
 
     md = markdown.Markdown(
         extensions=[
@@ -97,11 +149,30 @@ def render_markdown(filepath: str, dark_mode: bool = True) -> str:
     rendered = md.convert(body)
     rendered = TASK_ITEM_RE.sub(_replace_task_item, rendered)
     rendered = GITHUB_ALERT_RE.sub(_replace_alert, rendered)
+    if mermaid_blocks:
+        rendered = restore_mermaid_blocks(rendered, mermaid_blocks)
 
     pygments_style = 'monokai' if dark_mode else 'friendly'
     pygments_css = HtmlFormatter(style=pygments_style).get_style_defs('.highlight')
 
     theme_class = 'theme-dark' if dark_mode else 'theme-light'
+
+    mermaid_script = ''
+    if mermaid_blocks:
+        mermaid_src = _get_mermaid_script_src()
+        mermaid_theme = 'dark' if dark_mode else 'default'
+        mermaid_script = f"""
+<script src="{mermaid_src}"></script>
+<script>
+if (window.mermaid) {{
+    mermaid.initialize({{
+        startOnLoad: true,
+        theme: '{mermaid_theme}',
+        securityLevel: 'strict',
+        fontFamily: '"Cantarell", "Inter", system-ui, sans-serif'
+    }});
+}}
+</script>"""
 
     return f"""<!DOCTYPE html>
 <html class="{theme_class}">
@@ -269,6 +340,23 @@ pre code {{
     border-radius: 8px;
     margin-bottom: 16px;
 }}
+.mermaid-container {{
+    margin-bottom: 16px;
+    padding: 16px;
+    background-color: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-x: auto;
+    text-align: center;
+}}
+pre.mermaid {{
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent !important;
+    font-family: inherit;
+    text-align: center;
+}}
 table {{
     border-spacing: 0;
     border-collapse: collapse;
@@ -317,7 +405,7 @@ details.frontmatter table {{
 <article class="markdown-body">
 {fm_html}
 {rendered}
-</article>
+</article>{mermaid_script}
 <script>
 window.__sushiScrollTo = function(id) {{
     if (!id) {{

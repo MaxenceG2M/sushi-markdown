@@ -17,6 +17,7 @@ However, `mimeHandler.js` appends `~/.local/share/sushi` to GJS's `imports.searc
 ## Features
 
 - **GitHub-flavored Markdown:** Tables, fenced code blocks with Pygments syntax highlighting, task lists (`- [x]`), GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, etc.), and collapsible YAML frontmatter.
+- **Mermaid diagrams:** Fenced ```` ```mermaid ```` blocks are rendered to inline SVGs using a locally cached `mermaid.min.js` (zero overhead when a file has no diagrams, and works offline).
 - **In-preview `.md` link navigation:** Clicking relative links to other `.md` files (including extensionless wiki links like `[Setup](./setup)`, directory links resolving `README.md` / `index.md`, and cross-file `#anchor` links) renders the target Markdown file in-place and updates the window titlebar and **Open With…** button.
 - **Local non-Markdown links:** Clicking a relative link to an image, PDF, or code file hands it off to Sushi's native viewer for that file type. External `http(s)://` and `mailto:` links open in your default browser.
 - **Back / Forward history & Raw toggle:**

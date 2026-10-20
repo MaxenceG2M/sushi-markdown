@@ -5,7 +5,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-echo "1. Testing render_markdown.py HTML generation..."
+echo "1. Testing render_markdown.py HTML & Mermaid generation..."
 cat > "$tmpdir/sample.md" <<'EOF'
 ---
 title: Sample Doc
@@ -21,6 +21,12 @@ author: Pat
 
 See [Other](./other.md#details) and [Section](#heading-one).
 
+```mermaid
+graph TD
+    A[Markdown File] --> B[render_markdown.py]
+    B --> C[WebKit2 Preview]
+```
+
 ```python
 def greet():
     return 42
@@ -33,15 +39,20 @@ grep -q 'class="theme-dark"' <<<"$html_out"
 grep -q '<details class="frontmatter">' <<<"$html_out"
 grep -q 'markdown-alert-note' <<<"$html_out"
 grep -q 'task-list-item-checkbox" checked disabled' <<<"$html_out"
+grep -q '<pre class="mermaid">' <<<"$html_out"
+grep -q 'mermaid.initialize' <<<"$html_out"
 grep -q 'window.__sushiScrollTo' <<<"$html_out"
 grep -q 'sushi-md://back' <<<"$html_out"
-echo "   OK: HTML output contains dark theme, frontmatter, alerts, task checkboxes, and JS bridge."
+echo "   OK: HTML output contains dark theme, frontmatter, alerts, task checkboxes, Mermaid block, and JS bridge."
 
 echo "2. Testing GJS Sushi MimeHandler & MarkdownRenderer..."
 export XDG_DATA_HOME="$tmpdir/xdg_data"
 mkdir -p "$XDG_DATA_HOME/sushi/viewers"
 ln -s "$here/render_markdown.py" "$XDG_DATA_HOME/sushi/render_markdown.py"
 ln -s "$here/viewers/markdown.js" "$XDG_DATA_HOME/sushi/viewers/markdown.js"
+if [ -f "$HOME/.local/share/sushi/mermaid.min.js" ]; then
+    ln -s "$HOME/.local/share/sushi/mermaid.min.js" "$XDG_DATA_HOME/sushi/mermaid.min.js"
+fi
 
 GI_TYPELIB_PATH=/usr/lib/x86_64-linux-gnu/sushi/girepository-1.0 \
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/sushi \
@@ -71,12 +82,19 @@ let f = Gio.File.new_for_path('$tmpdir/sample.md');
 let info = f.query_info('*', Gio.FileQueryInfoFlags.NONE, null);
 let r = new klass(f, info);
 let tb = r.toolbar;
-GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+GLib.timeout_add(GLib.PRIORITY_DEFAULT, 450, () => {
     if (!tb.get_visible() || !tb.box.get_visible()) {
         throw new Error('Toolbar was not made visible');
     }
-    print('   OK: Resolved MarkdownRenderer and verified toolbar visibility.');
-    imports.system.exit(0);
+    r._webView.run_javascript('!!document.querySelector(\".mermaid svg\")', null, (obj, res) => {
+        let hasSvg = obj.run_javascript_finish(res).get_js_value().to_boolean();
+        if (!hasSvg) {
+            throw new Error('Mermaid SVG was not rendered');
+        }
+        print('   OK: Resolved MarkdownRenderer, verified toolbar visibility, and rendered Mermaid SVG.');
+        imports.system.exit(0);
+    });
+    return GLib.SOURCE_REMOVE;
 });
 Gtk.main();
 "
