@@ -30,7 +30,8 @@ ALLOWED_TAGS = frozenset({
 ALLOWED_ATTRS = {
     '*': {'class', 'id', 'title', 'lang', 'dir'},
     'a': {'href', 'name', 'target', 'rel'},
-    'img': {'src', 'alt', 'width', 'height', 'loading'},
+    'img': {'src', 'alt', 'width', 'height', 'loading', 'align'},
+    'p': {'align'},
     'input': {'type', 'checked', 'disabled'},
     'th': {'align', 'colspan', 'rowspan'},
     'td': {'align', 'colspan', 'rowspan'},
@@ -41,12 +42,51 @@ ALLOWED_ATTRS = {
     'details': {'open'},
     'code': {'class'},  # for language-xxx classes from Pygments
     'pre': {'class'},
-    'div': {'class'},
+    'div': {'class', 'align'},
     'span': {'class'},
 }
 
-# URL schemes allowed in href/src
+# URL schemes allowed in href/src (data: is further restricted to images)
 ALLOWED_SCHEMES = frozenset({'http', 'https', 'mailto', 'file', 'data'})
+
+
+# Disallowed container tags whose content is dropped along with the tag
+SKIP_CONTENT_TAGS = frozenset({
+    'script', 'style', 'iframe', 'object', 'form', 'button', 'select',
+    'textarea', 'svg', 'math', 'noscript', 'template',
+})
+
+# Leading C0 controls/spaces are ignored by browsers, and tab/CR/LF are
+# removed anywhere in a URL, so `java\tscript:` must still be seen as a scheme.
+_URL_IGNORED_RE = re.compile(r'[\t\n\r]')
+_URL_LEADING_CHARS = ''.join(map(chr, range(0x21)))
+_URL_SCHEME_RE = re.compile(r'^([a-zA-Z][a-zA-Z0-9+.-]*):')
+
+
+def _is_safe_url(tag: str, value: str) -> bool:
+    """Allow relative URLs and fragments; check the scheme of absolute ones."""
+    url = _URL_IGNORED_RE.sub('', value).lstrip(_URL_LEADING_CHARS)
+    match = _URL_SCHEME_RE.match(url)
+    if not match:
+        return True
+    scheme = match.group(1).lower()
+    if scheme == 'data':
+        return tag == 'img' and url[5:].lower().startswith('image/')
+    return scheme in ALLOWED_SCHEMES
+
+
+def _clean_attrs(tag: str, attrs) -> str:
+    """Keep only whitelisted attributes with safe URLs, serialized and escaped."""
+    allowed = ALLOWED_ATTRS.get(tag, set()) | ALLOWED_ATTRS['*']
+    out = []
+    for name, value in attrs:
+        name = name.lower()
+        if name not in allowed:
+            continue
+        if name in ('href', 'src') and value and not _is_safe_url(tag, value):
+            continue
+        out.append(f' {name}' if value is None else f' {name}="{html.escape(value, quote=True)}"')
+    return ''.join(out)
 
 
 class _Sanitizer(HTMLParser):
@@ -65,56 +105,19 @@ class _Sanitizer(HTMLParser):
                 self._skip_depth += 1
             return
         if tag not in ALLOWED_TAGS:
-            # Skip this tag and its content for container tags
-            if tag in ('script', 'style', 'iframe', 'object', 'embed',
-                       'form', 'button', 'select', 'textarea', 'svg',
-                       'math', 'link', 'meta', 'base'):
+            # Skip this tag and its content for container tags. Void elements
+            # (link, meta, base, embed) never get an end tag, so they must not
+            # go here: they are simply dropped.
+            if tag in SKIP_CONTENT_TAGS:
                 self._skip_depth = 1
                 self._skip_tag = tag
             return
-        # Filter attributes
-        allowed = ALLOWED_ATTRS.get(tag, set()) | ALLOWED_ATTRS.get('*', set())
-        clean_attrs = []
-        for name, value in attrs:
-            name = name.lower()
-            if name not in allowed:
-                continue
-            if name in ('href', 'src') and value:
-                # Validate URL scheme
-                scheme = value.split(':', 1)[0].lower() if ':' in value else ''
-                if scheme and scheme not in ALLOWED_SCHEMES:
-                    continue
-                # Block javascript: and other dangerous schemes explicitly
-                if value.strip().lower().startswith(('javascript:', 'vbscript:', 'data:text/html')):
-                    continue
-            clean_attrs.append((name, value))
-        attr_str = ''.join(
-            f' {n}' if v is None else f' {n}="{html.escape(v, quote=True)}"'
-            for n, v in clean_attrs
-        )
-        self._out.append(f'<{tag}{attr_str}>')
+        self._out.append(f'<{tag}{_clean_attrs(tag, attrs)}>')
 
     def handle_startendtag(self, tag, attrs):
         tag = tag.lower()
         if tag in ALLOWED_TAGS and self._skip_depth == 0:
-            allowed = ALLOWED_ATTRS.get(tag, set()) | ALLOWED_ATTRS.get('*', set())
-            clean_attrs = []
-            for name, value in attrs:
-                name = name.lower()
-                if name not in allowed:
-                    continue
-                if name in ('href', 'src') and value:
-                    scheme = value.split(':', 1)[0].lower() if ':' in value else ''
-                    if scheme and scheme not in ALLOWED_SCHEMES:
-                        continue
-                    if value.strip().lower().startswith(('javascript:', 'vbscript:', 'data:text/html')):
-                        continue
-                clean_attrs.append((name, value))
-            attr_str = ''.join(
-                f' {n}' if v is None else f' {n}="{html.escape(v, quote=True)}"'
-                for n, v in clean_attrs
-            )
-            self._out.append(f'<{tag}{attr_str}/>')
+            self._out.append(f'<{tag}{_clean_attrs(tag, attrs)}/>')
 
     def handle_endtag(self, tag):
         tag = tag.lower()
@@ -311,6 +314,10 @@ def render_markdown(filepath: str, dark_mode: bool = True) -> str:
             from urllib.parse import urlparse
             parsed = urlparse(mermaid_src)
             mermaid_csp_src = f' {parsed.scheme}://{parsed.netloc}'
+        else:
+            # Local copy lives outside the document's directory, and 'self'
+            # does not reliably cover file:// pages
+            mermaid_csp_src = ' file:'
         mermaid_script = f"""
 <script src="{mermaid_src}"></script>
 <script>
@@ -329,7 +336,7 @@ if (window.mermaid) {{
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'{mermaid_csp_src}; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'{mermaid_csp_src}; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: http: https:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';">
 <style>
 :root.theme-dark {{
     --bg: #1e1e1e;

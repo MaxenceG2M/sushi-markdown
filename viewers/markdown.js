@@ -524,7 +524,7 @@ var Klass = _isAvailable() ? GObject.registerClass({
                         this.set_visible_child_name('raw');
                     }
                 } catch (e) {
-                    if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    if (!(e instanceof GLib.Error && e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)))
                         logError(e, 'Failed to render markdown');
                 }
                 if (!this.ready)
@@ -572,7 +572,7 @@ var Klass = _isAvailable() ? GObject.registerClass({
             try {
                 ldr.load_finish(result);
             } catch (e) {
-                if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                if (!(e instanceof GLib.Error && e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)))
                     logError(e, 'Failed to load raw file content');
             }
         });

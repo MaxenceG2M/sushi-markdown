@@ -31,12 +31,11 @@ However, `mimeHandler.js` appends `~/.local/share/sushi` to GJS's `imports.searc
 This project takes security seriously. The following protections are built in:
 
 - **HTML Sanitization:** All rendered Markdown HTML is passed through a whitelist-based sanitizer that strips dangerous tags (`<script>`, `<iframe>`, `<object>`, `<svg>`, etc.), event handler attributes (`onclick`, `onerror`, …), and dangerous URL schemes (`javascript:`, `vbscript:`, `data:text/html`). Only a curated set of safe HTML tags and attributes is allowed.
-- **Content Security Policy (CSP):** The generated HTML includes a strict CSP header (`default-src 'none'`) that blocks inline scripts, external resource loading, form submissions, and framing — except for explicitly whitelisted sources (local files, Mermaid CDN when diagrams are present).
+- **Content Security Policy (CSP):** The generated HTML includes a CSP (`default-src 'none'`) that blocks plugins, frames, form submissions, network requests from scripts and loading scripts from other origins (except the Mermaid CDN when diagrams are present). Inline scripts are still allowed because the viewer relies on them, so the sanitizer remains the primary defense.
 - **WebKit2 Sandbox:** The viewer enables WebKit2's sandbox mode to isolate the rendering process.
 - **Mermaid `securityLevel: 'strict'`:** Mermaid diagrams are rendered with strict security to prevent XSS via diagram definitions.
 - **File Size Limit:** Files larger than 10 MiB are rejected to prevent denial-of-service via memory exhaustion.
-- **Dependency Verification:** `install.sh` checks that `gnome-sushi`, `python3-markdown`, and `python3-pygments` are installed before proceeding.
-- **Mermaid Integrity:** When downloading `mermaid.min.js` from CDN, the SHA-256 checksum is displayed for manual verification (automated verification is a TODO).
+- **Dependency Verification:** `install.sh` checks that `gnome-sushi` (the `sushi` command), `python3-markdown`, and `python3-pygments` are installed before proceeding.
 
 If you open untrusted Markdown files, these protections significantly reduce the attack surface. However, no system is 100% secure — always exercise caution with files from unknown sources.
 

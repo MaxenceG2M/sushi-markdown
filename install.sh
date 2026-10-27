@@ -17,7 +17,7 @@ check_dep() {
 }
 
 check_dep python3 python3
-check_dep gnome-sushi gnome-sushi
+check_dep sushi gnome-sushi
 
 # Vérifier les modules Python
 for mod in markdown pygments; do
@@ -39,11 +39,6 @@ echo "viewer -> $target_dir/viewers/markdown.js"
 echo "helper -> $target_dir/render_markdown.py"
 
 # --- Cache mermaid.min.js locally for offline diagram rendering ---
-# SHA-256 checksum for mermaid@11 from jsDelivr (verified 2026-10)
-MERMAID_SHA256="3b254d9a8d7c840e6b8a3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3"
-# Note: the real checksum should be computed and hardcoded here.
-# For now we download and warn if sha256sum is not available.
-
 cache_mermaid() {
     if [ -f "$target_dir/mermaid.min.js" ]; then
         return 0
@@ -60,22 +55,16 @@ cache_mermaid() {
         fi
     done
 
-    # Download from CDN with checksum verification
-    if command -v curl >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
+    # Download from CDN (not checksum-verified: mermaid@11 is a moving tag)
+    if command -v curl >/dev/null 2>&1; then
         local tmp_mermaid
         tmp_mermaid=$(mktemp)
         if curl -fsSL "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" -o "$tmp_mermaid"; then
-            # Verify checksum (placeholder — replace with actual checksum)
-            local actual_sha
-            actual_sha=$(sha256sum "$tmp_mermaid" | awk '{print $1}')
-            echo "  Downloaded mermaid.min.js (SHA-256: ${actual_sha:0:16}...)"
-            # TODO: verify against known-good checksum before moving into place
             mv "$tmp_mermaid" "$target_dir/mermaid.min.js"
             echo "mermaid -> $target_dir/mermaid.min.js (downloaded from jsDelivr)"
             return 0
-        else
-            rm -f "$tmp_mermaid"
         fi
+        rm -f "$tmp_mermaid"
     fi
 
     echo "WARNING: Could not obtain mermaid.min.js — Mermaid diagrams will not render." >&2
